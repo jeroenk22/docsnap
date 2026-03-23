@@ -11,6 +11,7 @@ Gebruik:
 import argparse
 import asyncio
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -18,6 +19,11 @@ import html2text
 import yaml
 from dotenv import dotenv_values
 from playwright.async_api import async_playwright, Page
+
+
+def log(msg: str) -> None:
+    ts = time.strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}", flush=True)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -55,12 +61,19 @@ async def do_login(page: Page, login_cfg: dict, username: str, password: str) ->
         return
 
     login_url = login_cfg["url"]
-    print(f"  [login] Navigeer naar {login_url}")
-    await page.goto(login_url, wait_until="networkidle")
+    log(f"[login] Navigeer naar {login_url}")
+    wait_mode = login_cfg.get("wait_until", "load")  # "networkidle" werkt niet op zware SPAs
+    await page.goto(login_url, wait_until=wait_mode, timeout=60_000)
 
     if method == "manual":
-        print("  [login] Wacht op handmatige login — druk Enter als je bent ingelogd...")
+        log("[login] Browser is open — log in via de browser en druk daarna hier op Enter...")
         input()
+        log("[login] Wachten tot alle redirects afgerond zijn...")
+        try:
+            await page.wait_for_load_state("networkidle", timeout=15_000)
+        except Exception:
+            pass
+        log(f"[login] Doorgaan (nu op: {page.url})")
         return
 
     if method == "form":
@@ -76,7 +89,7 @@ async def do_login(page: Page, login_cfg: dict, username: str, password: str) ->
                 f"Login lijkt mislukt — nog op: {page.url}\n"
                 "Controleer je credentials in .env of de YAML-config."
             )
-        print(f"  [login] Geslaagd ✓  (nu op: {page.url})")
+        log(f"[login] Geslaagd ✓  (nu op: {page.url})")
         return
 
     raise ValueError(f"Onbekende login method: {method!r}  (kies: none, form, manual)")
@@ -124,24 +137,53 @@ async def expand_all(page: Page, expand_cfg: dict) -> None:
         );
     """)
 
-    # Eventuele custom JS uit de config
+    # Eventuele custom JS uitvoeren — in hoofdframe én in iframes
+    frames_to_run = [page]
+    if expand_cfg.get("include_frames", False):
+        for frame in page.frames:
+            if frame != page.main_frame:
+                frames_to_run.append(frame)
+                log(f"  [frame] {frame.url}")
+
     for js in expand_cfg.get("custom_js", []):
-        try:
-            await page.evaluate(js)
-        except Exception as e:
-            print(f"    ⚠ custom_js mislukt: {e}")
+        for target in frames_to_run:
+            try:
+                await target.evaluate(js)
+            except Exception as e:
+                log(f"  ⚠ custom_js mislukt ({getattr(target, 'url', '?')}): {e}")
 
     await page.wait_for_timeout(expand_cfg.get("wait_ms", 300))
 
 
 async def page_to_markdown(page: Page, url: str,
                            content_cfg: dict, h2t: html2text.HTML2Text) -> str:
-    """Haal content op en converteer naar Markdown."""
+    """Haal content op en converteer naar Markdown.
+    Zoekt ook in child frames als include_frames is ingesteld."""
+    selectors = content_cfg.get("selectors", ["main", "article", ".content", "body"])
+
+    # Zoek in hoofdframe
     content_el = None
-    for sel in content_cfg.get("selectors", ["main", "article", ".content", "body"]):
+    for sel in selectors:
         content_el = await page.query_selector(sel)
         if content_el:
+            log(f"         Content gevonden via '{sel}' in hoofdframe")
             break
+
+    # Zoek in iframes als niet gevonden in hoofdframe
+    if not content_el and content_cfg.get("include_frames", False):
+        for frame in page.frames:
+            if frame == page.main_frame:
+                continue
+            for sel in selectors:
+                try:
+                    content_el = await frame.query_selector(sel)
+                    if content_el:
+                        log(f"         Content gevonden via '{sel}' in frame: {frame.url}")
+                        break
+                except Exception:
+                    pass
+            if content_el:
+                break
 
     html = await content_el.inner_html() if content_el else await page.content()
 
@@ -209,15 +251,38 @@ async def scrape(config_path: Path, force_visible: bool = False) -> Path:
     visited:  set[str]  = set()
     to_visit: list[str] = [clean_url(start_url)]
     pages_md: list[str] = [f"# {cfg.get('title', 'Documentatie')}\n\n*Automatisch gegenereerd*\n"]
+    start_time = time.time()
+
+    log(f"Start: {cfg.get('title', 'Documentatie')}")
+    log(f"  Startpagina : {start_url}")
+    log(f"  Scope       : {scope_paths}")
+    log(f"  Max pagina's: {max_pages}")
+    log(f"  Output      : {output_md}")
+    print()
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=headless)
-        ctx     = await browser.new_context(viewport={"width": 1440, "height": 900})
-        page    = await ctx.new_page()
+        profile_dir = login_cfg.get("profile_dir")
+
+        if profile_dir:
+            # Persistent context: cookies/sessie worden bewaard tussen runs
+            profile_path = Path(profile_dir)
+            profile_path.mkdir(parents=True, exist_ok=True)
+            log(f"[browser] Persistent profiel: {profile_path}")
+            ctx  = await pw.chromium.launch_persistent_context(
+                str(profile_path),
+                headless=headless,
+                viewport={"width": 1440, "height": 900},
+            )
+            page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        else:
+            browser = await pw.chromium.launch(headless=headless)
+            ctx     = await browser.new_context(viewport={"width": 1440, "height": 900})
+            page    = await ctx.new_page()
 
         # Login indien nodig
         if login_cfg.get("method", "none") != "none":
             await do_login(page, login_cfg, username, password)
+            print()
 
         # Crawl
         while to_visit and len(visited) < max_pages:
@@ -225,32 +290,89 @@ async def scrape(config_path: Path, force_visible: bool = False) -> Path:
             if url in visited:
                 continue
             visited.add(url)
-            print(f"  [{len(visited):>3}] {url}")
+            log(f"[{len(visited):>3}/{max_pages}] Laden: {url}")
+            log(f"         Wachtrij: {len(to_visit)} pagina's nog te bezoeken")
 
             try:
                 await page.goto(url, wait_until="networkidle", timeout=30_000)
             except Exception as e:
-                print(f"       ⚠ Overgeslagen: {e}")
-                continue
+                if "interrupted by another navigation" in str(e):
+                    log(f"         ↻ Redirect gedetecteerd, wachten en opnieuw proberen...")
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=10_000)
+                    except Exception:
+                        pass
+                    try:
+                        await page.goto(url, wait_until="networkidle", timeout=30_000)
+                    except Exception as e2:
+                        log(f"         ⚠ Overgeslagen na retry: {e2}")
+                        continue
+                else:
+                    log(f"         ⚠ Overgeslagen: {e}")
+                    continue
 
-            # Nieuwe links ontdekken
+            # Wacht tot de content-selector in de DOM staat (Vue SPA kan nog renderen na networkidle)
+            wait_for = crawl_cfg.get("wait_for_selector")
+            if wait_for:
+                try:
+                    await page.wait_for_selector(wait_for, timeout=10_000)
+                    log(f"         Content-selector gevonden")
+                except Exception:
+                    log(f"         ⚠ wait_for_selector '{wait_for}' niet gevonden, ga toch verder")
+
+            # Wacht op iframes — Connect apps / embedded widgets laden apart
+            if crawl_cfg.get("wait_for_frames"):
+                frame_sel  = crawl_cfg["wait_for_frames"]
+                frame_timeout = crawl_cfg.get("frame_timeout_ms", 20_000)
+                log(f"         Wachten op iframe-content ('{frame_sel}') …")
+                found = False
+                deadline = time.time() + frame_timeout / 1000
+                while time.time() < deadline and not found:
+                    for frame in page.frames:
+                        if frame == page.main_frame:
+                            continue
+                        try:
+                            el = await frame.query_selector(frame_sel)
+                            if el:
+                                log(f"         iframe geladen: {frame.url}")
+                                found = True
+                                break
+                        except Exception:
+                            pass
+                    if not found:
+                        await page.wait_for_timeout(500)
+                if not found:
+                    log(f"         ⚠ iframe-selector '{frame_sel}' niet gevonden na {frame_timeout}ms")
+
+            # Accordions/navigatie uitklappen vóór link-discovery
+            await expand_all(page, expand_cfg)
+
+            # Nieuwe links ontdekken (ná expand zodat ingeklapte nav-items ook zichtbaar zijn)
+            known = len(visited) + len(to_visit)
             new = await collect_links(page, base_url, scope_paths, visited | set(to_visit))
             to_visit.extend(new)
-
-            # Accordions uitklappen
-            await expand_all(page, expand_cfg)
+            if new:
+                log(f"         +{len(new)} nieuwe pagina's gevonden  →  {[u.split('/')[-1] for u in new[:5]]}{'...' if len(new) > 5 else ''}")
 
             # Pagina → Markdown
             try:
                 md = await page_to_markdown(page, url, content_cfg, h2t)
                 pages_md.append(md)
+                title = await page.title()
+                log(f"         ✓ Opgeslagen: \"{title}\"")
             except Exception as e:
-                print(f"       ⚠ Conversie mislukt: {e}")
+                log(f"         ⚠ Conversie mislukt: {e}")
 
-        await browser.close()
+            elapsed = time.time() - start_time
+            log(f"         Voortgang: {len(visited)} gedaan | {len(to_visit)} resterend | {elapsed:.0f}s verstreken")
+            print()
 
+        await ctx.close()  # werkt zowel voor persistent context als gewone browser
+
+    elapsed = time.time() - start_time
     output_md.write_text("\n".join(pages_md), encoding="utf-8")
-    print(f"\n✅  {len(visited)} pagina's → {output_md}")
+    print()
+    log(f"✅  Klaar! {len(visited)} pagina's gescraped in {elapsed:.0f}s → {output_md}")
     return output_md
 
 
