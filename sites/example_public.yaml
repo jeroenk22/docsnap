@@ -1,0 +1,41 @@
+# sites/example_public.yaml
+# ─────────────────────────────────────────────
+# Voorbeeld: publieke docs zonder login
+# Pas base_url, start_url en scope_paths aan.
+# ─────────────────────────────────────────────
+
+title:     "Mijn Docs"
+base_url:  "https://docs.example.com"
+start_url: "https://docs.example.com/guide"
+output:    "example_docs.md"
+headless:  true
+
+scope_paths:
+  - /guide
+  - /reference
+  - /api
+
+login:
+  method: none       # geen login nodig
+
+expand:
+  enabled: true
+  wait_ms: 300
+  click_selectors:
+    - "summary"
+    - "[aria-expanded='false']"
+
+content:
+  selectors:
+    - "main"
+    - "article"
+    - ".content"
+  exclude_selectors:
+    - "nav"
+    - "footer"
+    - ".sidebar"
+
+crawl:
+  max_pages: 200
+
+include_images: false

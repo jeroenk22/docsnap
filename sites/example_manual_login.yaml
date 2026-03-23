@@ -1,0 +1,41 @@
+# sites/example_manual_login.yaml
+# ─────────────────────────────────────────────
+# Voorbeeld: handmatig inloggen
+# Browser opent zichtbaar, jij logt in,
+# daarna druk je Enter en scraping begint.
+# ─────────────────────────────────────────────
+
+title:     "Mijn Docs (handmatig login)"
+base_url:  "https://app.example.com"
+start_url: "https://app.example.com/docs"
+output:    "manual_docs.md"
+headless:  false          # browser moet zichtbaar zijn bij manual login!
+
+scope_paths:
+  - /docs
+
+login:
+  method: manual
+  url:    "https://app.example.com/login"
+
+expand:
+  enabled: true
+  wait_ms: 400
+  click_selectors:
+    - "summary"
+    - "[aria-expanded='false']"
+    - ".accordion-button"
+
+content:
+  selectors:
+    - "main"
+    - "article"
+    - ".content"
+  exclude_selectors:
+    - "nav"
+    - "footer"
+
+crawl:
+  max_pages: 300
+
+include_images: false

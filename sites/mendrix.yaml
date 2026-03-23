@@ -1,0 +1,55 @@
+# sites/mendrix.yaml
+# ─────────────────────────────────────────────
+# MendriX Support Documentatie
+# ─────────────────────────────────────────────
+
+title:    "MendriX Documentatie"
+base_url: "https://support.mendrix.com"
+start_url: "https://support.mendrix.com/docs"
+output:   "mendrix_docs.md"
+headless: true
+
+# Alleen pagina's onder /docs meenemen
+scope_paths:
+  - /docs
+
+# Login via formulier; credentials uit .env
+login:
+  method:       form
+  url:          "https://support.mendrix.com/login"
+  env_file:     ".env"          # bestand met MENDRIX_USERNAME en MENDRIX_PASSWORD
+  username_env: MENDRIX_USERNAME
+  password_env: MENDRIX_PASSWORD
+  selectors:
+    username: "input[type='email'], input[name='email']"
+    password: "input[type='password']"
+    submit:   "button[type='submit']"
+
+# Accordions, <details> en tabs uitklappen
+expand:
+  enabled: true
+  wait_ms: 400
+  click_selectors:
+    - "summary"
+    - ".accordion-button"
+    - "[data-bs-toggle='collapse']"
+    - "[aria-expanded='false']"
+
+# Welk deel van de pagina we willen
+content:
+  selectors:
+    - "main"
+    - "article"
+    - ".docs-content"
+    - ".content"
+    - "#content"
+  exclude_selectors:
+    - "nav"
+    - "footer"
+    - ".sidebar"
+    - ".breadcrumb"
+
+crawl:
+  max_pages: 500
+
+include_images: false
