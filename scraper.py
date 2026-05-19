@@ -161,23 +161,28 @@ async def page_to_markdown(page: Page, url: str,
     Zoekt ook in child frames als include_frames is ingesteld."""
     selectors = content_cfg.get("selectors", ["main", "article", ".content", "body"])
 
-    # Zoek in hoofdframe
     content_el = None
+    content_target = page
+    include_frames = content_cfg.get("include_frames", False)
+
+    # Geef selector-prioriteit voorrang boven frame-prioriteit:
+    # eerst per selector zoeken in hoofdframe, daarna in child frames.
+    # Zo wint een specifiek iframe-selector van een generieke <main> in de shell.
     for sel in selectors:
         content_el = await page.query_selector(sel)
         if content_el:
+            content_target = page
             log(f"         Content gevonden via '{sel}' in hoofdframe")
             break
 
-    # Zoek in iframes als niet gevonden in hoofdframe
-    if not content_el and content_cfg.get("include_frames", False):
-        for frame in page.frames:
-            if frame == page.main_frame:
-                continue
-            for sel in selectors:
+        if include_frames:
+            for frame in page.frames:
+                if frame == page.main_frame:
+                    continue
                 try:
                     content_el = await frame.query_selector(sel)
                     if content_el:
+                        content_target = frame
                         log(f"         Content gevonden via '{sel}' in frame: {frame.url}")
                         break
                 except Exception:
@@ -191,7 +196,7 @@ async def page_to_markdown(page: Page, url: str,
     exclude = content_cfg.get("exclude_selectors", [])
     if exclude and content_el:
         for sel in exclude:
-            await page.evaluate(f"""
+            await content_target.evaluate(f"""
                 el => el.querySelectorAll({sel!r}).forEach(n => n.remove())
             """, content_el)
         html = await content_el.inner_html()

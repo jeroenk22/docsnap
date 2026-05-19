@@ -9,6 +9,7 @@ Gebruik:
 """
 
 import argparse
+from html import escape
 import sys
 from pathlib import Path
 
@@ -65,6 +66,7 @@ p   { margin: 0 0 7pt 0; }
 def convert(input_md: Path, output_pdf: Path, title: str = "Documentatie") -> None:
     print(f"  [pdf] Lees {input_md} …")
     md_text = input_md.read_text(encoding="utf-8")
+    escaped_title = escape(title)
 
     print("  [pdf] Markdown → HTML …")
     body = markdown.markdown(
@@ -76,7 +78,7 @@ def convert(input_md: Path, output_pdf: Path, title: str = "Documentatie") -> No
 <html lang="nl">
 <head>
   <meta charset="utf-8">
-  <title>{title}</title>
+  <title>{escaped_title}</title>
   <style>{CSS}</style>
 </head>
 <body>{body}</body>
@@ -92,7 +94,7 @@ def convert(input_md: Path, output_pdf: Path, title: str = "Documentatie") -> No
             format="A4",
             margin={"top": "2.2cm", "bottom": "2.2cm", "left": "2.5cm", "right": "2.5cm"},
             display_header_footer=True,
-            header_template=f'<div style="font-size:9pt;color:#888;width:100%;text-align:left;padding-left:2.5cm">{title}</div>',
+            header_template=f'<div style="font-size:9pt;color:#888;width:100%;text-align:left;padding-left:2.5cm">{escaped_title}</div>',
             footer_template='<div style="font-size:9pt;color:#888;width:100%;text-align:right;padding-right:2.5cm">Pagina <span class="pageNumber"></span> van <span class="totalPages"></span></div>',
         )
         browser.close()

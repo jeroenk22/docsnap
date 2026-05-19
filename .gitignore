@@ -3,10 +3,16 @@ __pycache__/
 *.py[cod]
 *.pyo
 .env
+*.md
+!README.md
 *.md.bak
 *.pdf
 *.log
 openapi_spec.json
 page_storage.xml
 *_docs.md
+*_oauth.md
+*_peppol.md
 .pytest_cache/
+sites/*.yaml
+!sites/example_*.yaml
